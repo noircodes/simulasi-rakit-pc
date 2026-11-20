@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ThemeToggle } from "@/components/theme-toggle";
+import catalogMeta from "@/data/catalog/meta.json";
 import { CATEGORIES } from "@/lib/categories";
 import { fetchParts } from "@/lib/client/api";
 import { checkBuild, missingRequired } from "@/lib/compat";
@@ -16,6 +17,10 @@ import { toSelection, useBuildStore } from "@/store/build-store";
 import { PartPicker } from "./part-picker";
 import { SlotCard } from "./slot-card";
 import { SummaryPanel } from "./summary-panel";
+
+const syncedLabel = new Intl.DateTimeFormat("id-ID", { day: "numeric", month: "long", year: "numeric" }).format(
+  new Date(catalogMeta.syncedAt),
+);
 
 export function Builder() {
   const build = useBuildStore((s) => s.build);
@@ -175,11 +180,20 @@ export function Builder() {
       />
 
       <footer className="mt-10 border-t border-line pt-4 text-xs leading-relaxed text-muted">
-        Data spesifikasi:{" "}
-        <a className="underline underline-offset-2 hover:text-ink" href="https://github.com/docyx/pc-part-dataset" target="_blank" rel="noopener noreferrer">
-          docyx/pc-part-dataset
-        </a>{" "}
-        (MIT). Harga: Tokopedia lewat Apify.
+        Data komponen dari{" "}
+        <a className="underline underline-offset-2 hover:text-ink" href={catalogMeta.source} target="_blank" rel="noopener noreferrer">
+          BuildCores OpenDB
+        </a>
+        , lisensi{" "}
+        <a
+          className="underline underline-offset-2 hover:text-ink"
+          href="https://creativecommons.org/licenses/by-nc-sa/4.0/"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          CC BY-NC-SA 4.0
+        </a>
+        , diringkas ke field yang dipakai simulasi. Sinkron {syncedLabel}. Harga: Tokopedia lewat Apify.
       </footer>
     </div>
   );

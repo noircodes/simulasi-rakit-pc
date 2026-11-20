@@ -6,14 +6,22 @@ Simulasi rakit PC: pilih komponen, cek kompatibilitas, lihat harga per item dan 
 
 | Data | Sumber | Catatan |
 |---|---|---|
-| Katalog & spesifikasi | [docyx/pc-part-dataset](https://github.com/docyx/pc-part-dataset) via jsDelivr | MIT. Hanya untuk daftar komponen & cek kompatibilitas. Harga AS di dalamnya (snapshot Juli 2025) tidak dipakai. |
+| Katalog & spesifikasi | [BuildCores OpenDB](https://github.com/buildcores/buildcores-open-db) | CC BY-NC-SA 4.0 (non-komersial, wajib atribusi). Diringkas ke `data/catalog/` dan disinkronkan tiap hari oleh GitHub Actions. |
 | Harga baru/bekas (satu-satunya sumber harga) | Tokopedia lewat Apify actor [`unnoted/tokopedia-product-search`](https://apify.com/unnoted/tokopedia-product-search) | Filter kondisi `new`/`used`. Scraper pihak ketiga (unofficial). |
 
 Tidak ada API publik resmi untuk harga komponen PC di Indonesia, jadi semua harga diambil dari listing Tokopedia. Pengecekan jalan otomatis saat komponen dipilih atau kondisinya diganti. Harga yang dipakai adalah median listing yang judulnya cocok dengan model komponen, setelah varian lain, paket bundling, dan outlier dibuang. Detail di [docs/API.md](docs/API.md).
 
 ## Tech stack
 
-Next.js 16 (App Router, Cache Components) · TypeScript · Tailwind CSS v4 · Radix Dialog · Zustand · TanStack Query & Virtual · Upstash Redis · Vitest.
+Next.js 16 (App Router, Cache Components) · TypeScript · tsx + tar (sync katalog) · Tailwind CSS v4 · Radix Dialog · Zustand · TanStack Query & Virtual · Upstash Redis · Vitest.
+
+## Sinkron katalog
+
+`npm run sync:catalog` mengunduh OpenDB (±17 MB), menormalisasi 8 kategori, lalu menulis `data/catalog/*.json` dan `meta.json` (commit sumber & waktu sinkron). Workflow [.github/workflows/sync-catalog.yml](.github/workflows/sync-catalog.yml) menjalankannya setiap hari pukul 03.00 WIB dan meng-commit perubahan, sehingga Vercel deploy ulang otomatis. Workflow butuh izin tulis: **Settings → Actions → General → Workflow permissions → Read and write**.
+
+## Lisensi data
+
+Data komponen diadaptasi dari BuildCores OpenDB dan dibagikan dengan lisensi yang sama (CC BY-NC-SA 4.0), lihat [data/catalog/README.md](data/catalog/README.md). Atribusi tampil di footer aplikasi. Penggunaan komersial butuh izin tertulis dari BuildCores.
 
 ## Jalankan lokal
 
@@ -46,7 +54,9 @@ Actor menagih $0.0015 per listing. Satu pengecekan mengambil maksimal 10 listing
 ## Struktur
 
 ```
-app/api/parts/[category]   katalog ringkas (cache 1 hari)
+app/api/parts/[category]   katalog dari data/catalog (prerender saat build)
+data/catalog/              katalog hasil sinkron BuildCores OpenDB
+scripts/sync-catalog.ts    unduh + normalisasi OpenDB
 app/api/market-price       cek harga Tokopedia (POST) + polling run (GET /[runId])
 components/builder         slot komponen, picker, ringkasan, panel harga pasar
 lib/compat.ts              aturan kompatibilitas

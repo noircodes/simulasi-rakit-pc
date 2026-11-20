@@ -1,0 +1,47 @@
+name: Sync catalog from BuildCores OpenDB
+
+on:
+  schedule:
+    # 03:00 WIB, after OpenDB's own daily sync
+    - cron: "0 20 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-catalog
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Sync catalog
+        run: npm run sync:catalog
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Test
+        run: npm test
+
+      - name: Commit when the data changed
+        run: |
+          if git diff --quiet -- data/catalog ':!data/catalog/meta.json'; then
+            echo "Catalog unchanged."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add data/catalog
+          git commit -m "chore(data): sync BuildCores OpenDB catalog"
+          git push

@@ -1,6 +1,7 @@
 import { CATEGORIES } from "./categories";
+import { normalizeFormFactor } from "./catalog";
 import { estimateLoad, PSU_HEADROOM, recommendedPsu } from "./power";
-import { ddrForCpuSocket, socketFits } from "./socket";
+import { socketFits } from "./socket";
 import type { CategoryKey, Part, PartSelection } from "./types";
 
 export type IssueLevel = "error" | "warning" | "info";
@@ -14,25 +15,31 @@ export interface Issue {
 
 /** 1 = Mini ITX, 2 = Micro ATX, 3 = ATX, 4 = E-ATX and larger. */
 export function boardSize(formFactor: string): number | null {
-  const f = formFactor.toLowerCase();
+  const f = normalizeFormFactor(formFactor).toLowerCase();
   if (f.includes("itx") || f.includes("dtx")) return 1;
-  if (f.includes("micro")) return 2;
-  if (f.startsWith("eatx") || f.includes("xl atx") || f.includes("ceb")) return 4;
+  if (f.includes("micro") || f.includes("flex")) return 2;
+  if (f.startsWith("eatx") || f.includes("xl atx") || f.includes("ssi") || f.includes("hptx")) return 4;
   if (f === "atx") return 3;
   return null;
 }
 
-/** Largest board a case takes, from its type string. */
+/** Largest board a case takes, from its type string. Fallback when the case lists no supported boards. */
 export function caseMaxBoard(type: string): number | null {
   const t = type.toLowerCase();
   if (t.startsWith("mini itx")) return 1;
-  if (t.startsWith("microatx")) return 2;
-  if (t.includes("full tower")) return 4;
+  if (t.startsWith("micro atx") || t.startsWith("microatx")) return 2;
+  if (t.startsWith("eatx") || t.includes("full tower")) return 4;
   if (t.startsWith("atx")) return 3;
   return null;
 }
 
 const BOARD_LABEL = ["", "Mini ITX", "Micro ATX", "ATX", "E-ATX"];
+
+/** Thin Mini-ITX boards use the Mini-ITX mounting holes. */
+function boardKey(formFactor: string): string {
+  const f = normalizeFormFactor(formFactor);
+  return /^thin mini itx$/i.test(f) ? "Mini ITX" : f;
+}
 
 export function checkBuild(sel: PartSelection): Issue[] {
   const issues: Issue[] = [];
@@ -42,17 +49,9 @@ export function checkBuild(sel: PartSelection): Issue[] {
   const gpu = sel["video-card"]?.part;
   const psu = sel["power-supply"]?.part;
   const pcCase = sel.case?.part;
+  const cooler = sel["cpu-cooler"]?.part;
 
-  if (cpu && !cpu.socket) {
-    issues.push({
-      level: "info",
-      code: "cpu-socket-unknown",
-      message: `Socket ${cpu.name} tidak terdeteksi otomatis. Cocokkan socket dengan motherboard secara manual.`,
-      categories: ["cpu"],
-    });
-  }
-
-  if (cpu?.socket && board && !socketFits(cpu.socket, board.socket)) {
+  if (cpu && board && !socketFits(cpu.socket, board.socket)) {
     issues.push({
       level: "error",
       code: "socket-mismatch",
@@ -70,16 +69,13 @@ export function checkBuild(sel: PartSelection): Issue[] {
         message: `RAM DDR${mem.ddr} tidak bisa dipasang di motherboard DDR${board.ddr}.`,
         categories: ["memory", "motherboard"],
       });
-    } else if (!board && cpu?.socket) {
-      const supported = ddrForCpuSocket(cpu.socket);
-      if (supported.length && !supported.includes(mem.ddr)) {
-        issues.push({
-          level: "error",
-          code: "ddr-cpu-mismatch",
-          message: `Platform ${cpu.socket} memakai DDR${supported.join("/DDR")}, bukan DDR${mem.ddr}.`,
-          categories: ["memory", "cpu"],
-        });
-      }
+    } else if (!board && cpu && cpu.memoryDdr.length && !cpu.memoryDdr.includes(mem.ddr)) {
+      issues.push({
+        level: "error",
+        code: "ddr-cpu-mismatch",
+        message: `${cpu.name} mendukung DDR${cpu.memoryDdr.join("/DDR")}, bukan DDR${mem.ddr}.`,
+        categories: ["memory", "cpu"],
+      });
     }
     if (board?.memorySlots && mem.modules * qty > board.memorySlots) {
       issues.push({
@@ -99,17 +95,23 @@ export function checkBuild(sel: PartSelection): Issue[] {
     }
   }
 
-  if (board && pcCase) {
+  if (board && pcCase && pcCase.supportedBoards.length) {
+    if (!pcCase.supportedBoards.includes(boardKey(board.formFactor))) {
+      issues.push({
+        level: "error",
+        code: "case-size",
+        message: `Motherboard ${board.formFactor} tidak didukung casing ini (muat: ${pcCase.supportedBoards.join(", ")}).`,
+        categories: ["motherboard", "case"],
+      });
+    }
+  } else if (board && pcCase) {
     const size = boardSize(board.formFactor);
     const max = caseMaxBoard(pcCase.type);
     if (size && max && size > max) {
-      const eatxInMid = size === 4 && max === 3;
       issues.push({
-        level: eatxInMid ? "warning" : "error",
+        level: "error",
         code: "case-size",
-        message: eatxInMid
-          ? `Motherboard ${board.formFactor} di casing mid tower: cek dulu dukungan E-ATX di spesifikasi casing.`
-          : `Motherboard ${board.formFactor} tidak muat di casing ${pcCase.type} (maks ${BOARD_LABEL[max]}).`,
+        message: `Motherboard ${board.formFactor} tidak muat di casing ${pcCase.type} (maks ${BOARD_LABEL[max]}).`,
         categories: ["motherboard", "case"],
       });
     } else if (!max) {
@@ -120,6 +122,15 @@ export function checkBuild(sel: PartSelection): Issue[] {
         categories: ["case"],
       });
     }
+  }
+
+  if (gpu?.length && pcCase?.maxGpuLength && gpu.length > pcCase.maxGpuLength) {
+    issues.push({
+      level: "error",
+      code: "gpu-length",
+      message: `Kartu grafis ${gpu.length}mm lebih panjang dari batas casing ${pcCase.maxGpuLength}mm.`,
+      categories: ["video-card", "case"],
+    });
   }
 
   if (cpu && !cpu.graphics && !gpu) {
@@ -150,11 +161,29 @@ export function checkBuild(sel: PartSelection): Issue[] {
     }
   }
 
-  if (cpu?.tdp && cpu.tdp >= 105 && !sel["cpu-cooler"]) {
+  if (cpu && cooler?.sockets.length && !cooler.sockets.includes(cpu.socket)) {
+    issues.push({
+      level: "error",
+      code: "cooler-socket",
+      message: `CPU cooler ini tidak mendukung socket ${cpu.socket}.`,
+      categories: ["cpu-cooler", "cpu"],
+    });
+  }
+
+  if (cooler && !cooler.waterCooled && cooler.height && pcCase?.maxCoolerHeight && cooler.height > pcCase.maxCoolerHeight) {
+    issues.push({
+      level: "error",
+      code: "cooler-height",
+      message: `CPU cooler setinggi ${cooler.height}mm melebihi batas casing ${pcCase.maxCoolerHeight}mm.`,
+      categories: ["cpu-cooler", "case"],
+    });
+  }
+
+  if (cpu && !cpu.includesCooler && !cooler) {
     issues.push({
       level: "info",
       code: "cooler-suggested",
-      message: `${cpu.name} (${cpu.tdp}W) umumnya dijual tanpa cooler bawaan. Pertimbangkan CPU cooler.`,
+      message: `${cpu.name} dijual tanpa cooler bawaan. Tambahkan CPU cooler.`,
       categories: ["cpu-cooler"],
     });
   }

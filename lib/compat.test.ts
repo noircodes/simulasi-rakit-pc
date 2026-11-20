@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { boardSize, caseMaxBoard, checkBuild, isCompatibleCandidate, missingRequired } from "./compat";
 import {
-  atxCase, b550itx, b650, ddr4kit, ddr5kit, itxCase, psu300, psu650, rtx5060, ryzen5600x, ryzen7600x,
+  airCooler, atxCase, b550itx, b650, ddr4kit, ddr5kit, itxCase, psu300, psu650, rtx5060, ryzen5600x, ryzen7600x,
 } from "./fixtures";
 import { estimateGpuTdp, estimateLoad, recommendedPsu } from "./power";
 import type { PartSelection } from "./types";
@@ -18,9 +18,11 @@ const goodBuild: PartSelection = {
 };
 
 describe("checkBuild", () => {
-  it("passes a matching AM5 build with only the cooler hint", () => {
+  it("passes a matching AM5 build, only hinting that this CPU ships without a cooler", () => {
     expect(checkBuild(goodBuild).filter((i) => i.level !== "info")).toEqual([]);
     expect(codes(goodBuild)).toContain("cooler-suggested");
+    expect(codes({ ...goodBuild, "cpu-cooler": { part: airCooler, qty: 1 } })).not.toContain("cooler-suggested");
+    expect(codes({ cpu: { part: ryzen5600x, qty: 1 }, "video-card": { part: rtx5060, qty: 1 } })).not.toContain("cooler-suggested");
   });
 
   it("flags socket mismatch", () => {
@@ -31,7 +33,7 @@ describe("checkBuild", () => {
     expect(codes({ ...goodBuild, memory: { part: ddr4kit, qty: 1 } })).toContain("ddr-mismatch");
   });
 
-  it("flags DDR mismatch against the CPU platform when no board is chosen", () => {
+  it("flags DDR mismatch against the CPU memory controller when no board is chosen", () => {
     const noBoard = { ...goodBuild };
     delete noBoard.motherboard;
     expect(codes({ ...noBoard, memory: { part: ddr4kit, qty: 1 } })).toContain("ddr-cpu-mismatch");
@@ -42,8 +44,29 @@ describe("checkBuild", () => {
     expect(codes(sel)).toEqual(expect.arrayContaining(["ram-slots", "ram-capacity"]));
   });
 
-  it("flags a board too big for the case", () => {
+  it("checks the board against the case's supported form factors", () => {
     expect(codes({ ...goodBuild, case: { part: itxCase, qty: 1 } })).toContain("case-size");
+    expect(codes({ motherboard: { part: b550itx, qty: 1 }, case: { part: itxCase, qty: 1 } })).not.toContain("case-size");
+    expect(codes({ motherboard: { part: { ...b550itx, formFactor: "Thin Mini ITX" }, qty: 1 }, case: { part: itxCase, qty: 1 } })).not.toContain("case-size");
+  });
+
+  it("falls back to the case type when the case lists no boards", () => {
+    const bare = { ...itxCase, supportedBoards: [] };
+    expect(codes({ ...goodBuild, case: { part: bare, qty: 1 } })).toContain("case-size");
+  });
+
+  it("checks GPU length against the case", () => {
+    expect(codes({ ...goodBuild, "video-card": { part: { ...rtx5060, length: 336 }, qty: 1 }, case: { part: itxCase, qty: 1 } })).toContain("gpu-length");
+    expect(codes(goodBuild)).not.toContain("gpu-length");
+  });
+
+  it("checks cooler socket support and height", () => {
+    const withCooler = { ...goodBuild, "cpu-cooler": { part: airCooler, qty: 1 } };
+    expect(codes(withCooler)).not.toEqual(expect.arrayContaining(["cooler-socket", "cooler-height"]));
+    expect(codes({ ...withCooler, "cpu-cooler": { part: { ...airCooler, sockets: ["LGA1700"] }, qty: 1 } })).toContain("cooler-socket");
+    expect(codes({ ...withCooler, case: { part: { ...atxCase, maxCoolerHeight: 150 }, qty: 1 } })).toContain("cooler-height");
+    const aio = { ...airCooler, waterCooled: true, radiator: 240, height: 200 };
+    expect(codes({ ...withCooler, "cpu-cooler": { part: aio, qty: 1 }, case: { part: { ...atxCase, maxCoolerHeight: 150 }, qty: 1 } })).not.toContain("cooler-height");
   });
 
   it("requires a GPU when the CPU has no integrated graphics", () => {
@@ -72,8 +95,9 @@ describe("isCompatibleCandidate", () => {
     expect(isCompatibleCandidate({}, ryzen5600x)).toBe(true);
   });
 
-  it("hides PSUs below the load", () => {
+  it("hides PSUs below the load and GPUs too long for the case", () => {
     expect(isCompatibleCandidate(goodBuild, psu300)).toBe(false);
+    expect(isCompatibleCandidate({ case: { part: itxCase, qty: 1 } }, { ...rtx5060, length: 300 })).toBe(false);
   });
 });
 
@@ -83,14 +107,14 @@ describe("form factors", () => {
     expect(boardSize("Micro ATX")).toBe(2);
     expect(boardSize("ATX")).toBe(3);
     expect(boardSize("EATX")).toBe(4);
-    expect(caseMaxBoard("MicroATX Mini Tower")).toBe(2);
+    expect(caseMaxBoard("Micro ATX Mini Tower")).toBe(2);
     expect(caseMaxBoard("ATX Full Tower")).toBe(4);
     expect(caseMaxBoard("HTPC")).toBeNull();
   });
 });
 
 describe("power", () => {
-  it("matches the most specific GPU chipset", () => {
+  it("estimates GPU power from the chipset when OpenDB has none", () => {
     expect(estimateGpuTdp("GeForce RTX 4070 SUPER")).toBe(220);
     expect(estimateGpuTdp("GeForce RTX 4070")).toBe(200);
     expect(estimateGpuTdp("Radeon RX 7900 XTX")).toBe(355);

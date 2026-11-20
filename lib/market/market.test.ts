@@ -1,25 +1,34 @@
 import { describe, expect, it } from "vitest";
-import { b650, ddr4kit, ddr5kit, rtx5060, ryzen7600x } from "../fixtures";
-import type { MarketListing, StoragePart } from "../types";
+import { airCooler, atxCase, b650, ddr4kit, ddr5kit, psu650, rtx5060, ryzen7600x, ssd990 } from "../fixtures";
+import type { MarketListing } from "../types";
 import { toListing } from "./apify-tokopedia";
-import { buildSearchQuery, matchesRule, relevanceRule } from "./query";
+import { buildSearchQuery, cleanName, matchesRule, relevanceRule } from "./query";
 import { computeStats, median, withoutOutliers } from "./stats";
 
 const listing = (title: string, priceIdr: number): MarketListing => ({
   title, priceIdr, url: null, shopName: null, shopCity: null, shopType: null, soldCount: null, rating: null, isAd: false,
 });
 
-const ssd: StoragePart = {
-  id: "s1", category: "internal-hard-drive", name: "Samsung 990 Pro", brand: "Samsung", priceUsd: 149.99,
-  capacity: 2000, type: "SSD", formFactor: "M.2-2280", interface: "M.2 PCIe 4.0 X4",
-};
+const ssd = ssd990;
 
 describe("buildSearchQuery", () => {
   it("builds marketplace-style terms", () => {
     expect(buildSearchQuery(ryzen7600x)).toBe("AMD Ryzen 5 7600X");
     expect(buildSearchQuery(ddr5kit)).toBe("Corsair Vengeance 32GB DDR5");
-    expect(buildSearchQuery(rtx5060)).toBe("MSI RTX 5060 Ventus 2X OC");
+    expect(buildSearchQuery(rtx5060)).toBe("MSI RTX 5060 Ventus 2X OC 8GB");
     expect(buildSearchQuery(ssd)).toBe("Samsung 990 Pro 2TB");
+    expect(buildSearchQuery(psu650)).toBe("MSI MAG A650BN 650W");
+    expect(buildSearchQuery(atxCase)).toBe("Montech XR");
+    expect(buildSearchQuery(airCooler)).toBe("Thermalright Peerless Assassin 120 SE");
+  });
+
+  it("strips OpenDB retail noise from names", () => {
+    expect(cleanName("Intel Core i5 6400T OEM/Tray")).toBe("Intel Core i5 6400T");
+    expect(cleanName("Intel Xeon E5-1660 3.3 GHz 6-Core LGA2011")).toBe("Intel Xeon E5-1660");
+    expect(cleanName("Fractal Design Define 7 ATX Mid Tower White Tempered Glass")).toBe("Fractal Design Define 7");
+    expect(cleanName("Antec Earthwatts 550W 80+ Bronze Certified Non-Modular")).toBe("Antec Earthwatts 550W");
+    expect(cleanName("Deepcool GAMMAXX Water 240mm A-RGB 69.34 CFM White")).toBe("Deepcool GAMMAXX A-RGB");
+    expect(cleanName("Cougar DarkBlader-G ATX Full Tower Black / Silver with Tempered Glass Side Panel")).toBe("Cougar DarkBlader-G");
   });
 });
 
@@ -76,11 +85,7 @@ describe("whole-word model matching (titles from live Tokopedia results)", () =>
 
 describe("default rule", () => {
   it("pairs the model number with a series word", () => {
-    const cooler = {
-      id: "c1", category: "cpu-cooler" as const, name: "Thermalright Peerless Assassin 120 SE", brand: "Thermalright",
-      priceUsd: 34.9, size: null, noise: "25.6",
-    };
-    const rule = relevanceRule(cooler);
+    const rule = relevanceRule(airCooler);
     expect(rule.all).toEqual(["120", "peerless"]);
     expect(matchesRule("Thermalright Peerless Assassin 120 SE ARGB", rule)).toBe(true);
     expect(matchesRule("Thermalright Assassin King 120", rule)).toBe(false);

@@ -1,0 +1,16 @@
+{
+  "source": "https://github.com/buildcores/buildcores-open-db",
+  "license": "CC BY-NC-SA 4.0",
+  "commit": "51237c3bb77e91eb2380b68ca36dad707dd4c480",
+  "syncedAt": "2026-11-20T14:24:47.235Z",
+  "counts": {
+    "cpu": 789,
+    "motherboard": 3697,
+    "memory": 4733,
+    "video-card": 3892,
+    "internal-hard-drive": 3503,
+    "power-supply": 3303,
+    "case": 3806,
+    "cpu-cooler": 2428
+  }
+}

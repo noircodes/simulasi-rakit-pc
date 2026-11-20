@@ -10,11 +10,11 @@ import { fetchParts } from "@/lib/client/api";
 import { isCompatibleCandidate } from "@/lib/compat";
 import type { CategoryKey, Part, PartSelection } from "@/lib/types";
 
-/** "popular" keeps the dataset order, which follows PCPartPicker popularity. */
-type Sort = "popular" | "name";
+/** "newest" keeps the catalog order: release year descending, then name. */
+type Sort = "newest" | "name";
 
 /** Categories where another chosen part can rule a candidate out. */
-const COMPAT_FILTERED: CategoryKey[] = ["cpu", "motherboard", "memory", "case", "power-supply"];
+const COMPAT_FILTERED: CategoryKey[] = ["cpu", "motherboard", "memory", "video-card", "case", "power-supply", "cpu-cooler"];
 
 interface Props {
   category: CategoryKey | null;
@@ -58,21 +58,27 @@ function PickerBody({ category, selection, selectedId, onSelect }: Omit<Props, "
 
   const [search, setSearch] = useState("");
   const [brand, setBrand] = useState("");
-  const [sort, setSort] = useState<Sort>("popular");
+  const [sort, setSort] = useState<Sort>("newest");
   const canFilterCompat = COMPAT_FILTERED.includes(category);
   const [compatOnly, setCompatOnly] = useState(true);
 
+  // OpenDB spells some brands several ways (ASRock, AsRock, ASROCK); group them case-insensitively.
   const brands = useMemo(() => {
-    const counts = new Map<string, number>();
-    data?.forEach((p) => counts.set(p.brand, (counts.get(p.brand) ?? 0) + 1));
-    return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([b]) => b);
+    const groups = new Map<string, { label: string; count: number }>();
+    data?.forEach((p) => {
+      const key = p.brand.toLowerCase();
+      const g = groups.get(key);
+      if (g) g.count++;
+      else groups.set(key, { label: p.brand, count: 1 });
+    });
+    return [...groups.entries()].sort((a, b) => b[1].count - a[1].count).map(([value, g]) => ({ value, label: g.label }));
   }, [data]);
 
   const { items, hiddenByCompat } = useMemo(() => {
     if (!data) return { items: [], hiddenByCompat: 0 };
     const words = search.toLowerCase().split(/\s+/).filter(Boolean);
     const matched = data.filter(
-      (p) => (!brand || p.brand === brand) && words.every((w) => p.name.toLowerCase().includes(w)),
+      (p) => (!brand || p.brand.toLowerCase() === brand) && words.every((w) => p.name.toLowerCase().includes(w)),
     );
     const compatible = canFilterCompat && compatOnly ? matched.filter((p) => isCompatibleCandidate(selection, p)) : matched;
     const sorted = sort === "name" ? [...compatible].sort((a, b) => a.name.localeCompare(b.name)) : compatible;
@@ -127,8 +133,8 @@ function PickerBody({ category, selection, selectedId, onSelect }: Omit<Props, "
           >
             <option value="">Semua merek</option>
             {brands.map((b) => (
-              <option key={b} value={b}>
-                {b}
+              <option key={b.value} value={b.value}>
+                {b.label}
               </option>
             ))}
           </select>
@@ -138,7 +144,7 @@ function PickerBody({ category, selection, selectedId, onSelect }: Omit<Props, "
             className="h-11 min-w-0 flex-1 rounded-sm border border-line bg-paper px-2 sm:flex-none"
             aria-label="Urutkan"
           >
-            <option value="popular">Terpopuler</option>
+            <option value="newest">Terbaru</option>
             <option value="name">Nama A-Z</option>
           </select>
           {canFilterCompat && (
@@ -199,7 +205,9 @@ function PickerBody({ category, selection, selectedId, onSelect }: Omit<Props, "
                       <span className="block truncate text-sm font-medium">{part.name}</span>
                       <span className="tabular block truncate text-xs text-muted">{specLine(part)}</span>
                     </span>
-                    {selected && <span className="shrink-0 text-xs text-muted">Terpilih</span>}
+                    <span className="tabular shrink-0 text-right text-xs text-muted">
+                      {selected ? "Terpilih" : part.releaseYear ?? ""}
+                    </span>
                   </button>
                 </li>
               );

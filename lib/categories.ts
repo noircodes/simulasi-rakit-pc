@@ -42,33 +42,37 @@ export function specLine(part: Part): string {
   switch (part.category) {
     case "cpu":
       bits.push(
-        part.socket ?? "socket ?",
+        part.socket,
         part.coreCount && `${part.coreCount} core`,
         part.boostClock && `${part.boostClock} GHz`,
         part.tdp && `${part.tdp}W`,
         part.graphics ? "iGPU" : "tanpa iGPU",
+        part.includesCooler && "cooler bawaan",
       );
       break;
     case "motherboard":
-      bits.push(part.socket, part.formFactor, part.ddr && `DDR${part.ddr}`, part.memorySlots && `${part.memorySlots} slot`);
+      bits.push(part.socket, part.chipset, part.formFactor, part.ddr && `DDR${part.ddr}`, part.memorySlots && `${part.memorySlots} slot`);
       break;
     case "memory":
       bits.push(`DDR${part.ddr}-${part.speed}`, `${part.modules}x${part.moduleGb}GB`, part.casLatency && `CL${part.casLatency}`);
       break;
     case "video-card":
-      bits.push(part.chipset, part.memory && `${part.memory}GB`, `~${part.tdp}W`);
+      bits.push(part.chipset, part.memory && `${part.memory}GB ${part.memoryType ?? ""}`.trim(), `${part.tdp}W`, part.length && `${part.length}mm`);
       break;
     case "internal-hard-drive":
-      bits.push(capacityLabel(part.capacity), part.type, part.interface);
+      bits.push(capacityLabel(part.capacity), part.type, part.formFactor, part.interface);
       break;
     case "power-supply":
-      bits.push(`${part.wattage}W`, part.efficiency && `80+ ${part.efficiency}`, part.modular && (part.modular === "No" ? "non-modular" : `modular ${part.modular.toLowerCase()}`));
+      bits.push(`${part.wattage}W`, part.formType, part.efficiency, part.modular && part.modular.toLowerCase());
       break;
     case "case":
-      bits.push(part.type, part.sidePanel);
+      bits.push(part.type, part.maxGpuLength && `VGA maks ${part.maxGpuLength}mm`, part.maxCoolerHeight && `cooler maks ${part.maxCoolerHeight}mm`);
       break;
     case "cpu-cooler":
-      bits.push(part.size ? `AIO ${part.size}mm` : "air cooler", part.noise && `${part.noise} dB`);
+      bits.push(
+        part.waterCooled ? `AIO ${part.radiator ? `${part.radiator}mm` : ""}`.trim() : "air cooler",
+        !part.waterCooled && part.height && `tinggi ${part.height}mm`,
+      );
       break;
   }
   return bits.filter(Boolean).join(" · ");

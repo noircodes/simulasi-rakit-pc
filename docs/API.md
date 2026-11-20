@@ -4,27 +4,31 @@ Semua endpoint ada di Next.js Route Handlers (`app/api`). Respons JSON.
 
 ## GET `/api/parts/{category}`
 
-Katalog & spesifikasi komponen dari dataset publik [`docyx/pc-part-dataset`](https://github.com/docyx/pc-part-dataset) (MIT), sudah dinormalisasi. Hanya dipakai untuk daftar komponen dan cek kompatibilitas; `priceUsd` (snapshot AS, Juli 2025) tidak ditampilkan sebagai harga. Di-cache server 1 hari (`cacheLife("days")`), diprerender saat build.
+Katalog & spesifikasi dari [BuildCores OpenDB](https://github.com/buildcores/buildcores-open-db) (CC BY-NC-SA 4.0), dibaca dari `data/catalog/{category}.json` yang dihasilkan `npm run sync:catalog`. Diprerender saat build untuk setiap kategori. Urutan: tahun rilis terbaru dulu, lalu nama.
 
 `category`: `cpu`, `motherboard`, `memory`, `video-card`, `internal-hard-drive`, `power-supply`, `case`, `cpu-cooler`.
 
 ```json
 {
   "category": "cpu",
-  "count": 492,
-  "source": "https://cdn.jsdelivr.net/gh/docyx/pc-part-dataset@main/data/json",
+  "count": 789,
+  "source": "https://github.com/buildcores/buildcores-open-db",
+  "license": "CC BY-NC-SA 4.0",
+  "syncedAt": "2026-11-20T14:24:47.235Z",
   "parts": [
-    { "id": "1x9k2a", "category": "cpu", "name": "AMD Ryzen 5 7600X", "brand": "AMD", "priceUsd": 170.49,
-      "socket": "AM5", "tdp": 105, "graphics": "Radeon", "coreCount": 6, "...": "..." }
+    { "id": "7ab840c3-8c52-4ced-a65c-7b0922ca479e", "category": "cpu", "name": "AMD Ryzen 7 9800X3D", "brand": "AMD",
+      "series": "Ryzen 7 9000", "releaseYear": 2024, "socket": "AM5", "tdp": 120, "memoryDdr": [5],
+      "includesCooler": false, "graphics": "AMD Radeon Graphics", "...": "..." }
   ]
 }
 ```
 
-- `id` stabil: hash FNV-1a dari nama + spesifikasi kunci.
-- `socket` CPU diturunkan dari `microarchitecture` (lihat `lib/socket.ts`); `null` = tidak diketahui.
-- `tdp` kartu grafis adalah estimasi dari tabel chipset (`lib/power.ts`).
+- `id` = `opendb_id` (UUID) dari OpenDB.
+- Socket dinormalisasi (`LGA 1700` → `LGA1700`, `TR4` → `sTR4`), form factor (`Mini-ITX` → `Mini ITX`).
+- Field per kategori: lihat `lib/types.ts`. Kasing membawa `supportedBoards`, `maxGpuLength`, `maxCoolerHeight`; cooler membawa `sockets` dan `height`.
+- RAM SO-DIMM (laptop) tidak disertakan. `tdp` kartu grafis dari OpenDB, atau estimasi chipset kalau kosong.
 
-Error: `404` kategori tidak dikenal, `502` dataset tidak bisa diambil.
+Error: `404` kategori tidak dikenal.
 
 ## POST `/api/market-price`
 

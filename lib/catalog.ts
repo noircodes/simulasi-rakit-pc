@@ -1,87 +1,106 @@
 import { estimateGpuTdp } from "./power";
-import { deriveBoardDdr, deriveCpuSocket } from "./socket";
+import { boardSocket, ddrNumber, normalizeSocket } from "./socket";
 import type { CategoryKey, Part } from "./types";
 
-/** Public PC part dataset (MIT, scraped from PCPartPicker), served by jsDelivr. */
-export const DATASET_URL = "https://cdn.jsdelivr.net/gh/docyx/pc-part-dataset@main/data/json";
+/**
+ * Catalog source: BuildCores OpenDB (https://github.com/buildcores/buildcores-open-db),
+ * CC BY-NC-SA 4.0. scripts/sync-catalog.ts downloads it, runs every record through
+ * normalizePart(), and writes the slim result to data/catalog/<category>.json.
+ */
+export const OPENDB_REPO = "buildcores/buildcores-open-db";
+
+/** OpenDB folder name for each catalog category. */
+export const OPENDB_FOLDERS: Record<CategoryKey, string> = {
+  cpu: "CPU",
+  motherboard: "Motherboard",
+  memory: "RAM",
+  "video-card": "GPU",
+  "internal-hard-drive": "Storage",
+  "power-supply": "PSU",
+  case: "PCCase",
+  "cpu-cooler": "CPUCooler",
+};
 
 type Raw = Record<string, unknown>;
 
-const MULTI_WORD_BRANDS = [
-  "Western Digital",
-  "Cooler Master",
-  "Fractal Design",
-  "be quiet!",
-  "Lian Li",
-  "Silicon Power",
-  "Super Flower",
-  "SK hynix",
-  "Arctic Cooling",
-];
-
-export function brandOf(name: string): string {
-  const multi = MULTI_WORD_BRANDS.find((b) => name.toLowerCase().startsWith(b.toLowerCase() + " "));
-  return multi ?? name.split(/\s+/)[0];
-}
-
-/** FNV-1a, base36. Stable across dataset refreshes as long as name and key specs stay. */
-export function hashId(text: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < text.length; i++) {
-    h ^= text.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return (h >>> 0).toString(36);
-}
-
-const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null);
 const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
-const range = (v: unknown): string | null =>
-  Array.isArray(v) ? v.join("-") : typeof v === "number" ? String(v) : null;
+const obj = (v: unknown): Raw => (v && typeof v === "object" ? (v as Raw) : {});
+const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+
+/** "Mini-ITX" and "Mini ITX" are the same board size. */
+export function normalizeFormFactor(ff: string): string {
+  return ff.replace(/-/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function year(v: unknown): number | null {
+  const y = num(v);
+  return y && y >= 1990 && y <= 2100 ? y : null;
+}
 
 export function normalizePart(category: CategoryKey, raw: Raw): Part | null {
-  const name = str(raw.name);
-  const priceUsd = num(raw.price);
-  if (!name || priceUsd === null || priceUsd <= 0) return null;
-  const brand = brandOf(name);
+  const meta = obj(raw.metadata);
+  const id = str(raw.opendb_id);
+  const name = str(meta.name);
+  const brand = str(meta.manufacturer);
+  if (!id || !name || !brand) return null;
+  const base = { id, name, brand, series: str(meta.series), releaseYear: year(meta.releaseYear) };
 
   switch (category) {
     case "cpu": {
-      const microarchitecture = str(raw.microarchitecture);
-      const tdp = num(raw.tdp);
+      const socket = str(raw.socket);
+      if (!socket) return null;
+      const specs = obj(raw.specifications);
+      const cores = obj(raw.cores);
+      const igpu = str(obj(specs.integratedGraphics).model);
       return {
-        category, name, brand, priceUsd, microarchitecture, tdp,
-        id: hashId(`cpu|${name}`),
-        coreCount: num(raw.core_count),
-        coreClock: num(raw.core_clock),
-        boostClock: num(raw.boost_clock),
-        graphics: str(raw.graphics),
-        socket: deriveCpuSocket(name, microarchitecture),
+        ...base,
+        category,
+        socket: normalizeSocket(socket),
+        coreCount: num(cores.total),
+        threads: num(cores.threads),
+        boostClock: num(obj(obj(raw.clocks).performance).boost),
+        microarchitecture: str(raw.microarchitecture),
+        tdp: num(specs.tdp),
+        graphics: igpu && igpu.toLowerCase() !== "none" ? igpu : null,
+        memoryDdr: arr(obj(specs.memory).types)
+          .map((t) => ddrNumber(str(t)))
+          .filter((n): n is number => n !== null),
+        includesCooler: specs.includesCooler === true,
       };
     }
     case "motherboard": {
       const socket = str(raw.socket);
       const formFactor = str(raw.form_factor);
       if (!socket || !formFactor) return null;
+      const memory = obj(raw.memory);
       return {
-        category, name, brand, priceUsd, socket, formFactor,
-        id: hashId(`mb|${name}|${socket}|${formFactor}`),
-        maxMemory: num(raw.max_memory),
-        memorySlots: num(raw.memory_slots),
-        ddr: deriveBoardDdr(name, socket),
+        ...base,
+        category,
+        socket: boardSocket(socket),
+        formFactor: normalizeFormFactor(formFactor),
+        chipset: str(raw.chipset),
+        maxMemory: num(memory.max),
+        memorySlots: num(memory.slots),
+        ddr: ddrNumber(str(memory.ram_type)),
       };
     }
     case "memory": {
-      const speed = raw.speed as unknown[];
-      const modules = raw.modules as unknown[];
-      const ddr = num(speed?.[0]);
-      const mhz = num(speed?.[1]);
-      const count = num(modules?.[0]);
-      const size = num(modules?.[1]);
-      if (!ddr || !mhz || !count || !size) return null;
+      // Desktop sticks only; SO-DIMM is laptop memory.
+      if (/so-dimm/i.test(str(raw.form_factor) ?? "")) return null;
+      const ddr = ddrNumber(str(raw.ram_type));
+      const modules = obj(raw.modules);
+      const count = num(modules.quantity);
+      const size = num(modules.capacity_gb);
+      const speed = num(raw.speed);
+      if (!ddr || !count || !size || !speed) return null;
       return {
-        category, name, brand, priceUsd, ddr, speed: mhz, modules: count, moduleGb: size,
-        id: hashId(`mem|${name}|${ddr}|${mhz}|${count}x${size}|${num(raw.cas_latency)}|${str(raw.color)}`),
+        ...base,
+        category,
+        ddr,
+        speed,
+        modules: count,
+        moduleGb: size,
         totalGb: count * size,
         casLatency: num(raw.cas_latency),
       };
@@ -90,22 +109,25 @@ export function normalizePart(category: CategoryKey, raw: Raw): Part | null {
       const chipset = str(raw.chipset);
       if (!chipset) return null;
       return {
-        category, name, brand, priceUsd, chipset,
-        id: hashId(`gpu|${name}|${chipset}|${num(raw.memory)}|${str(raw.color)}|${num(raw.length)}`),
+        ...base,
+        category,
+        chipset,
         memory: num(raw.memory),
-        boostClock: num(raw.boost_clock),
+        memoryType: str(raw.memory_type),
+        boostClock: num(raw.core_boost_clock),
         length: num(raw.length),
-        tdp: estimateGpuTdp(chipset),
+        tdp: num(raw.tdp) ?? estimateGpuTdp(chipset),
       };
     }
     case "internal-hard-drive": {
       const capacity = num(raw.capacity);
       if (!capacity) return null;
-      const type = typeof raw.type === "number" ? `HDD ${raw.type} rpm` : str(raw.type) ?? "SSD";
       return {
-        category, name, brand, priceUsd, capacity, type,
-        id: hashId(`sto|${name}|${capacity}|${type}|${str(raw.interface)}`),
-        formFactor: typeof raw.form_factor === "number" ? `${raw.form_factor}"` : str(raw.form_factor),
+        ...base,
+        category,
+        capacity,
+        type: str(raw.storage_type) ?? "SSD",
+        formFactor: str(raw.form_factor),
         interface: str(raw.interface),
       };
     }
@@ -113,46 +135,59 @@ export function normalizePart(category: CategoryKey, raw: Raw): Part | null {
       const wattage = num(raw.wattage);
       if (!wattage) return null;
       return {
-        category, name, brand, priceUsd, wattage,
-        id: hashId(`psu|${name}|${wattage}|${str(raw.color)}`),
-        efficiency: str(raw.efficiency),
-        modular: raw.modular === false ? "No" : str(raw.modular),
-        formType: str(raw.type),
+        ...base,
+        category,
+        wattage,
+        efficiency: str(raw.efficiency_rating),
+        modular: str(raw.modular),
+        formType: str(raw.form_factor),
       };
     }
     case "case": {
-      const type = str(raw.type);
+      const type = str(raw.form_factor);
       if (!type) return null;
       return {
-        category, name, brand, priceUsd, type,
-        id: hashId(`case|${name}|${type}|${str(raw.color)}`),
+        ...base,
+        category,
+        type,
+        supportedBoards: arr(raw.supported_motherboard_form_factors)
+          .map((f) => str(f))
+          .filter((f): f is string => f !== null)
+          .map(normalizeFormFactor),
+        maxGpuLength: num(raw.max_video_card_length),
+        maxCoolerHeight: num(raw.max_cpu_cooler_height),
         sidePanel: str(raw.side_panel),
       };
     }
     case "cpu-cooler":
       return {
-        category, name, brand, priceUsd,
-        id: hashId(`cool|${name}|${num(raw.size)}|${str(raw.color)}`),
-        size: num(raw.size),
-        noise: range(raw.noise_level),
+        ...base,
+        category,
+        waterCooled: raw.water_cooled === true,
+        radiator: num(raw.radiator_size),
+        height: num(raw.height),
+        sockets: [
+          ...new Set(
+            arr(raw.cpu_sockets)
+              .map((s) => str(s))
+              .filter((s): s is string => s !== null)
+              .map(normalizeSocket),
+          ),
+        ],
       };
   }
 }
 
-/** Normalizes, drops unpriced rows, and keeps the cheapest row per id. */
+/** Newest first, then by name, so the picker opens on current hardware. */
+export function sortCatalog(parts: Part[]): Part[] {
+  return [...parts].sort((a, b) => (b.releaseYear ?? 0) - (a.releaseYear ?? 0) || a.name.localeCompare(b.name));
+}
+
 export function normalizeCatalog(category: CategoryKey, rows: Raw[]): Part[] {
   const byId = new Map<string, Part>();
   for (const row of rows) {
     const part = normalizePart(category, row);
-    if (!part) continue;
-    const existing = byId.get(part.id);
-    if (!existing || part.priceUsd < existing.priceUsd) byId.set(part.id, part);
+    if (part) byId.set(part.id, part);
   }
-  return [...byId.values()];
-}
-
-export async function fetchCatalog(category: CategoryKey): Promise<Part[]> {
-  const res = await fetch(`${DATASET_URL}/${category}.json`);
-  if (!res.ok) throw new Error(`Dataset ${category}: HTTP ${res.status}`);
-  return normalizeCatalog(category, (await res.json()) as Raw[]);
+  return sortCatalog([...byId.values()]);
 }

@@ -37,13 +37,55 @@ export function compact(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+/**
+ * OpenDB names carry retail-listing noise: "Fractal Design Meshify C ATX Mid Tower Black",
+ * "Intel Core i5 6400T OEM/Tray", "Antec Earthwatts 550W 80+ Bronze Certified Non-Modular".
+ * Shop titles rarely repeat those extras, so they are dropped before searching and matching.
+ */
+const NAME_NOISE: RegExp[] = [
+  /\([^)]*\)/g,
+  /\bOEM\/Tray\b/gi,
+  /\b\d+(\.\d+)?\s?(GHz|CFM|MBps|RPM)\b/gi,
+  /\b\d+-Core\b/gi,
+  /\b230V\b/gi,
+  /\bLGA\s?\d{3,4}(-\d)?\b/gi,
+  /\b(AM[1-5]\+?|sTRX?[45]|TR4|FM[12]\+?)\b/g,
+  /\b80\+(\s?(Bronze|Silver|Gold|Platinum|Titanium|Standard|White))?\b/gi,
+  /\bCertified\b/gi,
+  /\b(Fully|Semi|Non)[- ]?Modular\b/gi,
+  /\b(E-?ATX|XL ATX|Micro[- ]?ATX|mATX|Mini[- ]?ITX|ATX)\b/gi,
+  /\b(Mid|Full|Mini|Slim)\s+Tower\b/gi,
+  /\b(Tower|Desktop|Test Bench|Chassis)\b/gi,
+  /\bTempered Glass\b/gi,
+  /\b(Water|Air)\b/g,
+  /\b\d{2,3}\s?mm\b/gi,
+  /\bG?DDR\d\w*\b|\bHBM2\b/gi,
+  /\b(Black|White|Silver|Gold|Pink|Red|Blue|Grey|Gray|Snow|Obsidian|Frost)\b/gi,
+];
+
+export function cleanName(name: string): string {
+  let s = name.split(/,| with | w\//i)[0];
+  for (const re of NAME_NOISE) s = s.replace(re, " ");
+  return s
+    .replace(/\s[/-](?=\s|$)/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .slice(0, 8)
+    .join(" ");
+}
+
 function stripParens(text: string): string {
   return text.replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function withoutBrand(part: Part): string {
-  const name = stripParens(part.name);
+  const name = cleanName(part.name);
   return name.toLowerCase().startsWith(part.brand.toLowerCase()) ? name.slice(part.brand.length).trim() : name;
+}
+
+function withBrand(part: Part, text: string): string {
+  return text.toLowerCase().startsWith(part.brand.toLowerCase()) ? text : `${part.brand} ${text}`;
 }
 
 function words(text: string): string[] {
@@ -64,6 +106,22 @@ function chipsetShort(chipset: string): string {
   return chipset.replace(/^(geforce|radeon|intel)\s+/i, "").replace(/\s+\d+\s*GB$/i, "").trim();
 }
 
+/**
+ * Storage names run long ("MSI SPATIUM M480 HS 1TB SSD M.2-2280 PCIe 4.0 X4 NVMe"); the
+ * part up to the capacity is what shops use: "MSI SPATIUM M480 HS 1TB".
+ */
+function storageName(part: Extract<Part, { category: "internal-hard-drive" }>): string {
+  const name = stripParens(part.name);
+  const upToCapacity = name.match(/^(.*?\b\d+(\.\d+)?\s?(GB|TB))\b/i)?.[1];
+  const model = upToCapacity
+    ?.replace(new RegExp(`^${part.brand}`, "i"), "")
+    .replace(/\b\d+(\.\d+)?\s?(GB|TB)$/i, "")
+    .trim();
+  // "SABRENT 1TB Rocket NVMe ..." puts the capacity first; fall back to the OpenDB series.
+  if (!model) return [part.brand, part.series, capacityLabel(part.capacity)].filter(Boolean).join(" ");
+  return upToCapacity ?? `${cleanName(name)} ${capacityLabel(part.capacity)}`;
+}
+
 export function buildSearchQuery(part: Part): string {
   switch (part.category) {
     case "memory":
@@ -79,15 +137,15 @@ export function buildSearchQuery(part: Part): string {
       return [part.brand, chip, rest].filter(Boolean).join(" ");
     }
     case "internal-hard-drive":
-      return `${stripParens(part.name)} ${capacityLabel(part.capacity)}`;
+      return withBrand(part, storageName(part));
     default:
-      return stripParens(part.name);
+      return withBrand(part, cleanName(part.name));
   }
 }
 
-/** Product line words for RAM: "Vengeance LPX", "Trident", "Fury Beast". */
+/** Product line words for RAM: "Vengeance LPX", "Trident", "Fury Beast". Taken from OpenDB's series when present. */
 function seriesWords(part: Part): string[] {
-  return withoutBrand(part)
+  return (part.series ?? withoutBrand(part))
     .split(/[^A-Za-z0-9]+/)
     .filter((w) => /^[a-z]{3,}$/i.test(w) && !STOP_WORDS.has(w.toLowerCase()) && w.toLowerCase() !== "gb")
     .slice(0, 2);
@@ -133,8 +191,10 @@ export function relevanceRule(part: Part): RelevanceRule {
     }
     case "internal-hard-drive": {
       const tb = capacityLabel(part.capacity).toLowerCase();
+      const capacity = /^\d+(\.\d+)?\s?(gb|tb)$/i;
+      const model = storageName(part).replace(new RegExp(`^${part.brand}\\s*`, "i"), "");
       return {
-        all: nameTokens(withoutBrand(part), 2),
+        all: nameTokens(model.split(" ").filter((w) => !capacity.test(w)).join(" "), 2),
         any: [brand, [tb, `${part.capacity}gb`]],
         exclude: GLOBAL_EXCLUDE,
       };

@@ -58,7 +58,8 @@ export const useBuildStore = create<BuildState>()(
       clear: () => set({ build: {} }),
     }),
     {
-      name: "rakit-pc-build-v1",
+      // v2: catalog moved to BuildCores OpenDB; v1 builds reference parts that no longer exist.
+      name: "rakit-pc-build-v2",
       storage: createJSONStorage(() => localStorage),
       skipHydration: true,
     },
