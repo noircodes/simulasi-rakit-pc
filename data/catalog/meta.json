@@ -1,8 +1,8 @@
 {
   "source": "https://github.com/buildcores/buildcores-open-db",
   "license": "CC BY-NC-SA 4.0",
-  "commit": "fb382c60c9f3c494ea43407480441ddefefbf198",
-  "syncedAt": "2026-11-27T02:32:01.874Z",
+  "commit": "3ce5502d7316230b26c2032f7e20ee621ab85aff",
+  "syncedAt": "2026-11-28T02:19:49.973Z",
   "counts": {
     "cpu": 789,
     "motherboard": 3697,
